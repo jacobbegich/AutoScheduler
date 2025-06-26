@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import io
 from pulp import LpProblem, LpVariable, LpMinimize, lpSum, LpBinary, LpStatus
+from openpyxl.styles import PatternFill
+from openpyxl.utils.dataframe import dataframe_to_rows
 
 DAYS = ["M", "T", "W", "TH", "F", "SAT", "SUN"]
 SHIFTS = ["4am-12pm", "11am-7pm", "6pm-2am"]
@@ -132,6 +134,24 @@ def build_user_friendly_schedule(x, employees, days, shifts, stores):
                 schedule_df.loc[(store, shift), day] = ", ".join(assigned) if assigned else ""
     return schedule_df
 
+def build_employee_summary(x, employees, days, shifts, stores):
+    """Build a summary of total shifts per employee"""
+    employee_shifts = {}
+    for emp in employees:
+        total_shifts = 0
+        for day in days:
+            for shift in shifts:
+                for store in stores:
+                    if x[emp, day, shift, store].varValue is not None and abs(x[emp, day, shift, store].varValue - 1) < 1e-3:
+                        total_shifts += 1
+        employee_shifts[emp] = total_shifts
+    
+    summary_df = pd.DataFrame({
+        "Employee": list(employee_shifts.keys()),
+        "Total Shifts": list(employee_shifts.values())
+    })
+    return summary_df
+
 def get_availability_template():
     columns = [EMPLOYEE_COL, STORE_PREFERENCE_COL, HARD_PREFERENCE_COL] + SHIFTS
     df = pd.DataFrame(columns=columns)
@@ -160,7 +180,8 @@ def run_scheduler(uploaded_file, store_staffing, max_shifts):
     schedule_result = build_schedule_output(x, understaff, employees, DAYS, SHIFTS, STORES, store_staffing, store_preferences, hard_preferences)
     out_df = pd.DataFrame(schedule_result, columns=["Day", "Shift", "Store", "Employees Assigned", "Total Assigned", "Missing Staff", "Soft Preference Violations", "Hard Preference Violations"])
     user_friendly_df = build_user_friendly_schedule(x, employees, DAYS, SHIFTS, STORES)
-    return out_df, user_friendly_df, None
+    employee_summary_df = build_employee_summary(x, employees, DAYS, SHIFTS, STORES)
+    return out_df, user_friendly_df, employee_summary_df, None
 
 def main():
     st.title("Store Staff Scheduler")
@@ -184,7 +205,7 @@ def main():
     uploaded_file = st.file_uploader("Upload availability.xlsx", type=["xlsx"])
     if uploaded_file is not None:
         with st.spinner("Generating schedule..."):
-            schedule_df, user_friendly_df, error = run_scheduler(uploaded_file, store_staffing, max_shifts)
+            schedule_df, user_friendly_df, employee_summary_df, error = run_scheduler(uploaded_file, store_staffing, max_shifts)
         if error:
             st.error(error)
         else:
@@ -193,10 +214,26 @@ def main():
             st.dataframe(schedule_df)
             st.subheader("User-Friendly Schedule")
             st.dataframe(user_friendly_df)
+            st.subheader("Employee Summary")
+            st.dataframe(employee_summary_df)
             towrite = io.BytesIO()
             with pd.ExcelWriter(towrite, engine="openpyxl") as writer:
                 schedule_df.to_excel(writer, index=False, sheet_name="Detailed Schedule")
                 user_friendly_df.to_excel(writer, sheet_name="User-Friendly Schedule")
+                employee_summary_df.to_excel(writer, index=False, sheet_name="Employee Summary")
+                
+                # Apply conditional formatting to Employee Summary sheet
+                workbook = writer.book
+                worksheet = workbook["Employee Summary"]
+                
+                # Create red fill pattern for cells with more than 5 shifts
+                red_fill = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
+                
+                # Apply red fill to cells in column B (Total Shifts) where value > 5
+                for row in range(2, len(employee_summary_df) + 2):  # Start from row 2 (skip header)
+                    cell = worksheet[f"B{row}"]
+                    if cell.value and cell.value > 5:
+                        cell.fill = red_fill
             towrite.seek(0)
             st.download_button(
                 label="Download schedule.xlsx",
