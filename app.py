@@ -7,13 +7,11 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 
 DAYS = ["M", "T", "W", "TH", "F", "SAT", "SUN"]
 SHIFTS = ["4am-12pm", "11am-7pm", "6pm-2am"]
-STORES = ["AK&CO", "Bookstore", "AK Mercantile", "Cabin", "Moosetique"]
-STORE_STAFFING = {"AK&CO": 2, "Bookstore": 2, "AK Mercantile": 2, "Cabin": 1, "Moosetique": 1}
 EMPLOYEE_COL = "Employee"
 STORE_PREFERENCE_COL = "Store Preference"  # Column E - soft preference
 HARD_PREFERENCE_COL = "Hard Preference"    # Column F - strict constraint
 
-def parse_availability(df):
+def parse_availability(df, stores):
     availability = {}
     store_preferences = {}
     hard_preferences = {}
@@ -36,7 +34,7 @@ def parse_availability(df):
             days = str(row[shift]).replace(" ","").split(",") if pd.notna(row[shift]) else []
             for day in days:
                 if day:
-                    for store in STORES:
+                    for store in stores:
                         availability[emp][(day, shift, store)] = 1
     return availability, store_preferences, hard_preferences
 
@@ -152,41 +150,79 @@ def build_employee_summary(x, employees, days, shifts, stores):
     })
     return summary_df
 
-def get_availability_template():
+def get_availability_template(stores):
     columns = [EMPLOYEE_COL, STORE_PREFERENCE_COL, HARD_PREFERENCE_COL] + SHIFTS
     df = pd.DataFrame(columns=columns)
     return df
 
-def run_scheduler(uploaded_file, store_staffing, max_shifts):
+def run_scheduler(uploaded_file, store_staffing, max_shifts, stores):
     df = pd.read_excel(uploaded_file)
     if STORE_PREFERENCE_COL not in df.columns:
         df[STORE_PREFERENCE_COL] = None
     if HARD_PREFERENCE_COL not in df.columns:
         df[HARD_PREFERENCE_COL] = None
-    availability, store_preferences, hard_preferences = parse_availability(df)
+    availability, store_preferences, hard_preferences = parse_availability(df, stores)
     employees = df[EMPLOYEE_COL].tolist()
     max_shifts_val = max_shifts
     max_shifts_upper_bound = max_shifts_val + 5
     found = False
     while max_shifts_val <= max_shifts_upper_bound:
-        x, understaff, status = schedule(availability, store_preferences, hard_preferences, employees, DAYS, SHIFTS, STORES, store_staffing, max_shifts_val)
+        x, understaff, status = schedule(availability, store_preferences, hard_preferences, employees, DAYS, SHIFTS, stores, store_staffing, max_shifts_val)
         if status == "Optimal":
             found = True
             break
         else:
             max_shifts_val += 1
     if not found:
-        return None, None, "No feasible schedule found. Try adjusting preferences or availability."
-    schedule_result = build_schedule_output(x, understaff, employees, DAYS, SHIFTS, STORES, store_staffing, store_preferences, hard_preferences)
+        return None, None, None, "No feasible schedule found. Try adjusting preferences or availability."
+    schedule_result = build_schedule_output(x, understaff, employees, DAYS, SHIFTS, stores, store_staffing, store_preferences, hard_preferences)
     out_df = pd.DataFrame(schedule_result, columns=["Day", "Shift", "Store", "Employees Assigned", "Total Assigned", "Missing Staff", "Soft Preference Violations", "Hard Preference Violations"])
-    user_friendly_df = build_user_friendly_schedule(x, employees, DAYS, SHIFTS, STORES)
-    employee_summary_df = build_employee_summary(x, employees, DAYS, SHIFTS, STORES)
+    user_friendly_df = build_user_friendly_schedule(x, employees, DAYS, SHIFTS, stores)
+    employee_summary_df = build_employee_summary(x, employees, DAYS, SHIFTS, stores)
     return out_df, user_friendly_df, employee_summary_df, None
 
 def main():
     st.title("Store Staff Scheduler")
     st.write("Upload your availability spreadsheet to generate a staff schedule.")
-    template_df = get_availability_template()
+    
+    # Store Configuration Section
+    st.header("Store Configuration")
+    st.write("Configure your stores and staffing requirements:")
+    
+    # Store input
+    store_input = st.text_area(
+        "Enter store names (one per line):",
+        value="AK&CO\nBookstore\nAK Mercantile\nCabin\nMoosetique",
+        help="Enter each store name on a separate line"
+    )
+    
+    # Parse stores from input
+    stores = [store.strip() for store in store_input.split('\n') if store.strip()]
+    
+    if not stores:
+        st.error("Please enter at least one store name.")
+        return
+    
+    # Staffing configuration
+    st.subheader("Staffing Requirements")
+    st.write("Set the number of employees needed per shift at each store:")
+    store_staffing = {}
+    for store in stores:
+        store_staffing[store] = st.number_input(
+            f"{store} staff needed per shift", 
+            min_value=1, 
+            max_value=10, 
+            value=2 if store in ["AK&CO", "Bookstore", "AK Mercantile"] else 1,  # Default values
+            step=1
+        )
+    
+    # Other parameters
+    max_shifts = st.number_input("Maximum shifts per employee per week", min_value=1, max_value=21, value=5, step=1)
+    
+    # Template download
+    st.header("Availability Template")
+    st.write("Download a template for your employees to fill out their availability:")
+    template_df = get_availability_template(stores)
     template_bytes = io.BytesIO()
     template_df.to_excel(template_bytes, index=False)
     template_bytes.seek(0)
@@ -196,16 +232,14 @@ def main():
         file_name="availability_template.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-    st.header("Staffing Parameters")
-    st.write("Set the number of employees needed per shift at each store:")
-    store_staffing = {}
-    for store in STORES:
-        store_staffing[store] = st.number_input(f"{store} staff needed per shift", min_value=1, max_value=10, value=STORE_STAFFING[store], step=1)
-    max_shifts = st.number_input("Maximum shifts per employee per week", min_value=1, max_value=21, value=5, step=1)
+    
+    # File upload
+    st.header("Generate Schedule")
     uploaded_file = st.file_uploader("Upload availability.xlsx", type=["xlsx"])
+    
     if uploaded_file is not None:
         with st.spinner("Generating schedule..."):
-            schedule_df, user_friendly_df, employee_summary_df, error = run_scheduler(uploaded_file, store_staffing, max_shifts)
+            schedule_df, user_friendly_df, employee_summary_df, error = run_scheduler(uploaded_file, store_staffing, max_shifts, stores)
         if error:
             st.error(error)
         else:
