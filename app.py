@@ -113,7 +113,7 @@ def parse_availability(df, stores):
                         availability[emp][(day, shift, store)] = 1
     return availability, store_preferences, hard_preferences, cannot_work_with, days_unavailable
 
-def schedule(availability, store_preferences, hard_preferences, cannot_work_with, employees, days, shifts, stores, store_staffing, max_shifts=5):
+def schedule(availability, store_preferences, hard_preferences, cannot_work_with, employees, days, shifts, stores, store_staffing, max_shifts=5, days_unavailable=None):
     prob = LpProblem("StoreShiftScheduling", LpMinimize)
     x = LpVariable.dicts("assign", [(e, d, s, st) for e in employees for d in days for s in shifts for st in stores], 0, 1, LpBinary)
     understaff = LpVariable.dicts("understaff", [(d, s, st) for d in days for s in shifts for st in stores], 0, None, cat='Integer')
@@ -150,6 +150,21 @@ def schedule(availability, store_preferences, hard_preferences, cannot_work_with
                 for st in stores:
                     if (d, s, st) not in availability[e]:
                         prob += x[e, d, s, st] == 0
+    # Add constraint for days unavailable
+    if days_unavailable:
+        for e in employees:
+            if e in days_unavailable and days_unavailable[e]:
+                for d in days:
+                    for s in shifts:
+                        for st in stores:
+                            # Check if this date is in the employee's unavailable dates
+                            try:
+                                date_obj = datetime.strptime(d, "%Y-%m-%d")
+                                date_mm_dd = date_obj.strftime("%m/%d")
+                                if date_mm_dd in days_unavailable[e]:
+                                    prob += x[e, d, s, st] == 0
+                            except:
+                                continue
     for e in employees:
         if hard_preferences.get(e):
             preferred_stores = hard_preferences[e]
@@ -349,7 +364,7 @@ def run_scheduler(uploaded_file, store_staffing, max_shifts, stores, start_date,
         
         # Try to schedule this week
         x, understaff, status = schedule(week_availability, store_preferences, hard_preferences, cannot_work_with, 
-                                       employees, week_dates, SHIFTS, stores, store_staffing, weekly_max_shifts)
+                                       employees, week_dates, SHIFTS, stores, store_staffing, weekly_max_shifts, days_unavailable)
         
         if status != "Optimal":
             return None, None, None, None, f"No feasible schedule found for week starting {week_start}. Try adjusting preferences or availability."
