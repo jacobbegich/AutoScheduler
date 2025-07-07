@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+from datetime import datetime, timedelta
 from pulp import LpProblem, LpVariable, LpMinimize, lpSum, LpBinary, LpStatus
 from openpyxl.styles import PatternFill
 from openpyxl.utils.dataframe import dataframe_to_rows
@@ -11,6 +12,47 @@ EMPLOYEE_COL = "Employee"
 STORE_PREFERENCE_COL = "Store Preference"  # Column E - soft preference
 HARD_PREFERENCE_COL = "Hard Preference"    # Column F - strict constraint
 CANNOT_WORK_WITH_COL = "Cannot Work With"  # Column G - employees who cannot work together
+
+def get_date_range(start_date, end_date):
+    """Convert date range to list of dates and day mappings"""
+    dates = []
+    day_to_dates = {}
+    
+    current_date = start_date
+    while current_date <= end_date:
+        # Get day of week (0=Monday, 6=Sunday)
+        day_of_week = current_date.weekday()
+        
+        # Map to our day abbreviations
+        day_mapping = {0: "M", 1: "T", 2: "W", 3: "TH", 4: "F", 5: "SAT", 6: "SUN"}
+        day_abbrev = day_mapping[day_of_week]
+        
+        # Store the date
+        date_str = current_date.strftime("%Y-%m-%d")
+        dates.append(date_str)
+        
+        # Map day abbreviation to actual dates
+        if day_abbrev not in day_to_dates:
+            day_to_dates[day_abbrev] = []
+        day_to_dates[day_abbrev].append(date_str)
+        
+        current_date += timedelta(days=1)
+    
+    return dates, day_to_dates
+
+def convert_availability_to_dates(availability, day_to_dates):
+    """Convert availability from day-based to date-based"""
+    date_availability = {}
+    
+    for emp, emp_availability in availability.items():
+        date_availability[emp] = {}
+        
+        for (day, shift, store), available in emp_availability.items():
+            if available and day in day_to_dates:
+                for date in day_to_dates[day]:
+                    date_availability[emp][(date, shift, store)] = 1
+    
+    return date_availability
 
 def parse_availability(df, stores):
     availability = {}
@@ -187,7 +229,7 @@ def get_availability_template(stores):
     df = pd.DataFrame(columns=columns)
     return df
 
-def run_scheduler(uploaded_file, store_staffing, max_shifts, stores):
+def run_scheduler(uploaded_file, store_staffing, max_shifts, stores, start_date, end_date):
     df = pd.read_excel(uploaded_file)
     if STORE_PREFERENCE_COL not in df.columns:
         df[STORE_PREFERENCE_COL] = None
@@ -195,13 +237,21 @@ def run_scheduler(uploaded_file, store_staffing, max_shifts, stores):
         df[HARD_PREFERENCE_COL] = None
     if CANNOT_WORK_WITH_COL not in df.columns:
         df[CANNOT_WORK_WITH_COL] = None
+    
+    # Parse availability (still day-based)
     availability, store_preferences, hard_preferences, cannot_work_with = parse_availability(df, stores)
+    
+    # Convert to date-based availability
+    dates, day_to_dates = get_date_range(start_date, end_date)
+    date_availability = convert_availability_to_dates(availability, day_to_dates)
+    
     employees = df[EMPLOYEE_COL].tolist()
     max_shifts_val = max_shifts
     max_shifts_upper_bound = max_shifts_val + 5
     found = False
     while max_shifts_val <= max_shifts_upper_bound:
-        x, understaff, status = schedule(availability, store_preferences, hard_preferences, cannot_work_with, employees, DAYS, SHIFTS, stores, store_staffing, max_shifts_val)
+        x, understaff, status = schedule(date_availability, store_preferences, hard_preferences, cannot_work_with, 
+                                       employees, dates, SHIFTS, stores, store_staffing, max_shifts_val)
         if status == "Optimal":
             found = True
             break
@@ -209,10 +259,11 @@ def run_scheduler(uploaded_file, store_staffing, max_shifts, stores):
             max_shifts_val += 1
     if not found:
         return None, None, None, "No feasible schedule found. Try adjusting preferences or availability."
-    schedule_result = build_schedule_output(x, understaff, employees, DAYS, SHIFTS, stores, store_staffing, store_preferences, hard_preferences, cannot_work_with)
+    schedule_result = build_schedule_output(x, understaff, employees, dates, SHIFTS, stores, 
+                                         store_staffing, store_preferences, hard_preferences, cannot_work_with)
     out_df = pd.DataFrame(schedule_result, columns=["Day", "Shift", "Store", "Employees Assigned", "Total Assigned", "Missing Staff", "Soft Preference Violations", "Hard Preference Violations", "Incompatible Employee Violations"])
-    user_friendly_df = build_user_friendly_schedule(x, employees, DAYS, SHIFTS, stores)
-    employee_summary_df = build_employee_summary(x, employees, DAYS, SHIFTS, stores)
+    user_friendly_df = build_user_friendly_schedule(x, employees, dates, SHIFTS, stores)
+    employee_summary_df = build_employee_summary(x, employees, dates, SHIFTS, stores)
     return out_df, user_friendly_df, employee_summary_df, None
 
 def main():
@@ -253,6 +304,30 @@ def main():
     # Other parameters
     max_shifts = st.number_input("Maximum shifts per employee per week", min_value=1, max_value=21, value=5, step=1)
     
+    # Date range input
+    st.subheader("Schedule Date Range")
+    st.write("Select the date range for the schedule:")
+    st.write("**Note**: The availability template uses day abbreviations (M, T, W, TH, F, SAT, SUN), but the schedule will show actual dates. The system will automatically map your day-based availability to the selected date range.")
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input("Start Date", value=datetime.now().date())
+    with col2:
+        end_date = st.date_input("End Date", value=(datetime.now() + timedelta(days=6)).date())
+    
+    # Show date range info
+    if start_date and end_date:
+        num_days = (end_date - start_date).days + 1
+        st.write(f"**Schedule will cover {num_days} days** ({start_date.strftime('%B %d, %Y')} to {end_date.strftime('%B %d, %Y')})")
+    
+    # Validate date range
+    if start_date > end_date:
+        st.error("Start date must be before or equal to end date.")
+        return
+    
+    # Convert to datetime objects
+    start_datetime = datetime.combine(start_date, datetime.min.time())
+    end_datetime = datetime.combine(end_date, datetime.min.time())
+    
     # Template download
     st.header("Availability Template")
     st.write("Download a template for your employees to fill out their availability:")
@@ -262,6 +337,7 @@ def main():
     st.write("- **Hard Preference**: Required stores only (comma-separated, strict constraint)")
     st.write("- **Cannot Work With**: Employees who cannot work together (comma-separated, strict constraint)")
     st.write("- **Shift columns**: Available days for each shift (comma-separated)")
+    st.write("**Note**: Availability uses day abbreviations (M, T, W, TH, F, SAT, SUN) but the schedule will show actual dates.")
     template_df = get_availability_template(stores)
     template_bytes = io.BytesIO()
     template_df.to_excel(template_bytes, index=False)
@@ -279,16 +355,16 @@ def main():
     
     if uploaded_file is not None:
         with st.spinner("Generating schedule..."):
-            schedule_df, user_friendly_df, employee_summary_df, error = run_scheduler(uploaded_file, store_staffing, max_shifts, stores)
+            schedule_df, user_friendly_df, employee_summary_df, error = run_scheduler(uploaded_file, store_staffing, max_shifts, stores, start_datetime, end_datetime)
         if error:
             st.error(error)
         else:
-            st.success("Schedule generated!")
-            st.subheader("Detailed Schedule")
+            st.success(f"Schedule generated for {start_date.strftime('%B %d, %Y')} to {end_date.strftime('%B %d, %Y')}!")
+            st.subheader(f"Detailed Schedule ({start_date.strftime('%b %d')} - {end_date.strftime('%b %d')})")
             st.dataframe(schedule_df)
-            st.subheader("User-Friendly Schedule")
+            st.subheader(f"User-Friendly Schedule ({start_date.strftime('%b %d')} - {end_date.strftime('%b %d')})")
             st.dataframe(user_friendly_df)
-            st.subheader("Employee Summary")
+            st.subheader(f"Employee Summary ({start_date.strftime('%b %d')} - {end_date.strftime('%b %d')})")
             st.dataframe(employee_summary_df)
             towrite = io.BytesIO()
             with pd.ExcelWriter(towrite, engine="openpyxl") as writer:
@@ -312,7 +388,7 @@ def main():
             st.download_button(
                 label="Download schedule.xlsx",
                 data=towrite,
-                file_name="schedule.xlsx",
+                file_name=f"schedule_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
