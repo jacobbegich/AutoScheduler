@@ -421,6 +421,12 @@ def generate_pdf_schedule(x, employees, dates, shifts, stores, start_date, end_d
             table_style.add('FONTNAME', (0, row_idx), (-1, row_idx), 'Helvetica-Bold')
             table_style.add('FONTSIZE', (0, row_idx), (-1, row_idx), 9)
         
+        # Style shift names in first column with bold
+        for week_idx, week in enumerate(sorted_weeks):
+            for shift_idx, shift in enumerate(shifts):
+                data_row = week_idx * (len(shifts) + 2) + 1 + shift_idx  # Calculate data row position
+                table_style.add('FONTNAME', (0, data_row), (0, data_row), 'Helvetica-Bold')  # Bold first column only
+        
         table.setStyle(table_style)
         
         story.append(table)
