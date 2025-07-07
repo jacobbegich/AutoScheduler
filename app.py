@@ -207,21 +207,56 @@ def build_user_friendly_schedule(x, employees, days, shifts, stores):
     return schedule_df
 
 def build_employee_summary(x, employees, days, shifts, stores):
-    """Build a summary of total shifts per employee"""
+    """Build a summary of total shifts per employee with weekly breakdown"""
     employee_shifts = {}
+    employee_weekly_shifts = {}
+    
+    # Initialize weekly shifts tracking
+    for emp in employees:
+        employee_weekly_shifts[emp] = {}
+    
     for emp in employees:
         total_shifts = 0
         for day in days:
+            # Calculate which calendar week this date belongs to
+            date_obj = datetime.strptime(day, "%Y-%m-%d")
+            # Get the start of the week (Monday) for this date
+            week_start = date_obj - timedelta(days=date_obj.weekday())
+            week_key = week_start.strftime("%Y-%m-%d")
+            
+            # Initialize week if not exists
+            if week_key not in employee_weekly_shifts[emp]:
+                employee_weekly_shifts[emp][week_key] = 0
+            
             for shift in shifts:
                 for store in stores:
                     if x[emp, day, shift, store].varValue is not None and abs(x[emp, day, shift, store].varValue - 1) < 1e-3:
                         total_shifts += 1
+                        employee_weekly_shifts[emp][week_key] += 1
+        
         employee_shifts[emp] = total_shifts
     
-    summary_df = pd.DataFrame({
+    # Create the summary DataFrame
+    summary_data = {
         "Employee": list(employee_shifts.keys()),
         "Total Shifts": list(employee_shifts.values())
-    })
+    }
+    
+    # Add weekly columns
+    all_weeks = set()
+    for emp_weeks in employee_weekly_shifts.values():
+        all_weeks.update(emp_weeks.keys())
+    
+    # Sort weeks chronologically
+    all_weeks = sorted(all_weeks)
+    
+    for week in all_weeks:
+        week_label = f"Week of {datetime.strptime(week, '%Y-%m-%d').strftime('%b %d')}"
+        summary_data[week_label] = []
+        for emp in employee_shifts.keys():
+            summary_data[week_label].append(employee_weekly_shifts[emp].get(week, 0))
+    
+    summary_df = pd.DataFrame(summary_data)
     return summary_df
 
 def get_availability_template(stores):
@@ -378,12 +413,26 @@ def main():
                 
                 # Create red fill pattern for cells with more than 5 shifts
                 red_fill = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
+                # Create yellow fill pattern for cells with 4-5 shifts (warning)
+                yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
                 
                 # Apply red fill to cells in column B (Total Shifts) where value > 5
                 for row in range(2, len(employee_summary_df) + 2):  # Start from row 2 (skip header)
                     cell = worksheet[f"B{row}"]
                     if cell.value and cell.value > 5:
                         cell.fill = red_fill
+                    elif cell.value and cell.value >= 4:
+                        cell.fill = yellow_fill
+                
+                # Apply formatting to weekly columns (columns C onwards)
+                for col_idx in range(3, len(employee_summary_df.columns) + 1):  # Start from column C
+                    col_letter = worksheet.cell(row=1, column=col_idx).column_letter
+                    for row in range(2, len(employee_summary_df) + 2):
+                        cell = worksheet[f"{col_letter}{row}"]
+                        if cell.value and cell.value > 5:
+                            cell.fill = red_fill
+                        elif cell.value and cell.value >= 4:
+                            cell.fill = yellow_fill
             towrite.seek(0)
             st.download_button(
                 label="Download schedule.xlsx",
