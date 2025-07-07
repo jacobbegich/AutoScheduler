@@ -467,6 +467,10 @@ def generate_pdf_schedule(x, employees, dates, shifts, stores, start_date, end_d
             table_style.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.lightgrey)
             table_style.add('FONTNAME', (0, row_idx), (-1, row_idx), 'Helvetica-Bold')
             table_style.add('FONTSIZE', (0, row_idx), (-1, row_idx), 8)
+            table_style.add('LEFTPADDING', (0, row_idx), (-1, row_idx), 3)
+            table_style.add('RIGHTPADDING', (0, row_idx), (-1, row_idx), 3)
+            table_style.add('TOPPADDING', (0, row_idx), (-1, row_idx), 2)
+            table_style.add('BOTTOMPADDING', (0, row_idx), (-1, row_idx), 2)
         
         # Style shift names in first column with bold
         for week_idx, week in enumerate(sorted_weeks):
@@ -474,6 +478,10 @@ def generate_pdf_schedule(x, employees, dates, shifts, stores, start_date, end_d
                 data_row = week_idx * (len(shifts) + 1) + 1 + shift_idx  # Calculate data row position (removed +2 since no spacing row)
                 table_style.add('FONTNAME', (0, data_row), (0, data_row), 'Helvetica-Bold')  # Bold first column only
                 table_style.add('FONTSIZE', (0, data_row), (-1, data_row), 7)  # Smaller font for data rows
+                table_style.add('LEFTPADDING', (0, data_row), (-1, data_row), 3)
+                table_style.add('RIGHTPADDING', (0, data_row), (-1, data_row), 3)
+                table_style.add('TOPPADDING', (0, data_row), (-1, data_row), 2)
+                table_style.add('BOTTOMPADDING', (0, data_row), (-1, data_row), 2)
         
         table.setStyle(table_style)
         
