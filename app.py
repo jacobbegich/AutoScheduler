@@ -10,11 +10,13 @@ SHIFTS = ["4am-12pm", "11am-7pm", "6pm-2am"]
 EMPLOYEE_COL = "Employee"
 STORE_PREFERENCE_COL = "Store Preference"  # Column E - soft preference
 HARD_PREFERENCE_COL = "Hard Preference"    # Column F - strict constraint
+CANNOT_WORK_WITH_COL = "Cannot Work With"  # Column G - employees who cannot work together
 
 def parse_availability(df, stores):
     availability = {}
     store_preferences = {}
     hard_preferences = {}
+    cannot_work_with = {}
     for _, row in df.iterrows():
         emp = row[EMPLOYEE_COL]
         availability[emp] = {}
@@ -30,15 +32,21 @@ def parse_availability(df, stores):
             hard_preferences[emp] = hard_pref_list if hard_pref_list else None
         else:
             hard_preferences[emp] = None
+        cannot_work = row[CANNOT_WORK_WITH_COL] if CANNOT_WORK_WITH_COL in df.columns else None
+        if pd.notna(cannot_work) and str(cannot_work).strip():
+            cannot_work_list = [p.strip() for p in str(cannot_work).split(",") if p.strip()]
+            cannot_work_with[emp] = cannot_work_list if cannot_work_list else None
+        else:
+            cannot_work_with[emp] = None
         for shift in SHIFTS:
             days = str(row[shift]).replace(" ","").split(",") if pd.notna(row[shift]) else []
             for day in days:
                 if day:
                     for store in stores:
                         availability[emp][(day, shift, store)] = 1
-    return availability, store_preferences, hard_preferences
+    return availability, store_preferences, hard_preferences, cannot_work_with
 
-def schedule(availability, store_preferences, hard_preferences, employees, days, shifts, stores, store_staffing, max_shifts=5):
+def schedule(availability, store_preferences, hard_preferences, cannot_work_with, employees, days, shifts, stores, store_staffing, max_shifts=5):
     prob = LpProblem("StoreShiftScheduling", LpMinimize)
     x = LpVariable.dicts("assign", [(e, d, s, st) for e in employees for d in days for s in shifts for st in stores], 0, 1, LpBinary)
     understaff = LpVariable.dicts("understaff", [(d, s, st) for d in days for s in shifts for st in stores], 0, None, cat='Integer')
@@ -83,10 +91,21 @@ def schedule(availability, store_preferences, hard_preferences, employees, days,
                     for st in stores:
                         if st not in preferred_stores:
                             prob += x[e, d, s, st] == 0
+    # Add constraints to prevent incompatible employees from working together
+    for e1 in employees:
+        if cannot_work_with.get(e1):
+            incompatible_employees = cannot_work_with[e1]
+            for e2 in incompatible_employees:
+                if e2 in employees:  # Only add constraint if the incompatible employee exists
+                    for d in days:
+                        for s in shifts:
+                            for st in stores:
+                                # If e1 is assigned to this shift/store, e2 cannot be assigned to the same shift/store
+                                prob += x[e1, d, s, st] + x[e2, d, s, st] <= 1
     prob.solve()
     return x, understaff, LpStatus[prob.status]
 
-def build_schedule_output(x, understaff, employees, days, shifts, stores, store_staffing, store_preferences, hard_preferences):
+def build_schedule_output(x, understaff, employees, days, shifts, stores, store_staffing, store_preferences, hard_preferences, cannot_work_with):
     schedule = []
     for d in days:
         for s in shifts:
@@ -96,6 +115,15 @@ def build_schedule_output(x, understaff, employees, days, shifts, stores, store_
                 missing = int(understaff[d, s, st].varValue) if understaff[d, s, st].varValue is not None else 0
                 soft_violations = []
                 hard_violations = []
+                incompatible_violations = []
+                
+                # Check for incompatible employee violations
+                for emp1 in assigned:
+                    if cannot_work_with.get(emp1):
+                        for emp2 in assigned:
+                            if emp2 in cannot_work_with[emp1]:
+                                incompatible_violations.append(f"{emp1} and {emp2} cannot work together")
+                
                 for emp in assigned:
                     if store_preferences.get(emp) and st not in store_preferences[emp]:
                         pref_str = ", ".join(store_preferences[emp])
@@ -103,8 +131,11 @@ def build_schedule_output(x, understaff, employees, days, shifts, stores, store_
                     if hard_preferences.get(emp) and st not in hard_preferences[emp]:
                         hard_pref_str = ", ".join(hard_preferences[emp])
                         hard_violations.append(f"{emp} (HARD: {hard_pref_str})")
+                
                 soft_flag = "; ".join(soft_violations) if soft_violations else "None"
                 hard_flag = "; ".join(hard_violations) if hard_violations else "None"
+                incompatible_flag = "; ".join(incompatible_violations) if incompatible_violations else "None"
+                
                 schedule.append({
                     "Day": d,
                     "Shift": s,
@@ -113,7 +144,8 @@ def build_schedule_output(x, understaff, employees, days, shifts, stores, store_
                     "Total Assigned": num_assigned,
                     "Missing Staff": missing,
                     "Soft Preference Violations": soft_flag,
-                    "Hard Preference Violations": hard_flag
+                    "Hard Preference Violations": hard_flag,
+                    "Incompatible Employee Violations": incompatible_flag
                 })
     return schedule
 
@@ -151,7 +183,7 @@ def build_employee_summary(x, employees, days, shifts, stores):
     return summary_df
 
 def get_availability_template(stores):
-    columns = [EMPLOYEE_COL, STORE_PREFERENCE_COL, HARD_PREFERENCE_COL] + SHIFTS
+    columns = [EMPLOYEE_COL, STORE_PREFERENCE_COL, HARD_PREFERENCE_COL, CANNOT_WORK_WITH_COL] + SHIFTS
     df = pd.DataFrame(columns=columns)
     return df
 
@@ -161,13 +193,15 @@ def run_scheduler(uploaded_file, store_staffing, max_shifts, stores):
         df[STORE_PREFERENCE_COL] = None
     if HARD_PREFERENCE_COL not in df.columns:
         df[HARD_PREFERENCE_COL] = None
-    availability, store_preferences, hard_preferences = parse_availability(df, stores)
+    if CANNOT_WORK_WITH_COL not in df.columns:
+        df[CANNOT_WORK_WITH_COL] = None
+    availability, store_preferences, hard_preferences, cannot_work_with = parse_availability(df, stores)
     employees = df[EMPLOYEE_COL].tolist()
     max_shifts_val = max_shifts
     max_shifts_upper_bound = max_shifts_val + 5
     found = False
     while max_shifts_val <= max_shifts_upper_bound:
-        x, understaff, status = schedule(availability, store_preferences, hard_preferences, employees, DAYS, SHIFTS, stores, store_staffing, max_shifts_val)
+        x, understaff, status = schedule(availability, store_preferences, hard_preferences, cannot_work_with, employees, DAYS, SHIFTS, stores, store_staffing, max_shifts_val)
         if status == "Optimal":
             found = True
             break
@@ -175,8 +209,8 @@ def run_scheduler(uploaded_file, store_staffing, max_shifts, stores):
             max_shifts_val += 1
     if not found:
         return None, None, None, "No feasible schedule found. Try adjusting preferences or availability."
-    schedule_result = build_schedule_output(x, understaff, employees, DAYS, SHIFTS, stores, store_staffing, store_preferences, hard_preferences)
-    out_df = pd.DataFrame(schedule_result, columns=["Day", "Shift", "Store", "Employees Assigned", "Total Assigned", "Missing Staff", "Soft Preference Violations", "Hard Preference Violations"])
+    schedule_result = build_schedule_output(x, understaff, employees, DAYS, SHIFTS, stores, store_staffing, store_preferences, hard_preferences, cannot_work_with)
+    out_df = pd.DataFrame(schedule_result, columns=["Day", "Shift", "Store", "Employees Assigned", "Total Assigned", "Missing Staff", "Soft Preference Violations", "Hard Preference Violations", "Incompatible Employee Violations"])
     user_friendly_df = build_user_friendly_schedule(x, employees, DAYS, SHIFTS, stores)
     employee_summary_df = build_employee_summary(x, employees, DAYS, SHIFTS, stores)
     return out_df, user_friendly_df, employee_summary_df, None
@@ -222,6 +256,12 @@ def main():
     # Template download
     st.header("Availability Template")
     st.write("Download a template for your employees to fill out their availability:")
+    st.write("**Template columns:**")
+    st.write("- **Employee**: Employee name")
+    st.write("- **Store Preference**: Preferred stores (comma-separated, soft preference)")
+    st.write("- **Hard Preference**: Required stores only (comma-separated, strict constraint)")
+    st.write("- **Cannot Work With**: Employees who cannot work together (comma-separated, strict constraint)")
+    st.write("- **Shift columns**: Available days for each shift (comma-separated)")
     template_df = get_availability_template(stores)
     template_bytes = io.BytesIO()
     template_df.to_excel(template_bytes, index=False)
