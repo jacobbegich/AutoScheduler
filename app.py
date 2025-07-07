@@ -367,8 +367,8 @@ def generate_pdf_schedule(x, employees, dates, shifts, stores, start_date, end_d
     pdf_buffer = io.BytesIO()
     # Use landscape orientation by rotating A4
     landscape_pagesize = A4[1], A4[0]  # Swap width and height for landscape
-    doc = SimpleDocTemplate(pdf_buffer, pagesize=landscape_pagesize, rightMargin=0.3*inch, leftMargin=0.3*inch, 
-                           topMargin=0.3*inch, bottomMargin=0.3*inch)
+    doc = SimpleDocTemplate(pdf_buffer, pagesize=landscape_pagesize, rightMargin=0.2*inch, leftMargin=0.2*inch, 
+                           topMargin=0.2*inch, bottomMargin=0.2*inch)
     
     # Get styles
     styles = getSampleStyleSheet()
@@ -432,10 +432,7 @@ def generate_pdf_schedule(x, employees, dates, shifts, stores, start_date, end_d
                     row.append("")
                 table_data.append(row)
             
-            # Add spacing row between weeks (except after last week)
-            if week_idx < len(sorted_weeks) - 1:
-                spacing_row = [""] * 8  # Empty row for spacing
-                table_data.append(spacing_row)
+            # Remove spacing row between weeks
         
         # Calculate column widths for landscape layout
         col_widths = [1.5*inch] + [1.2*inch] * 7  # Shift column wider, 7 day columns
@@ -463,7 +460,7 @@ def generate_pdf_schedule(x, employees, dates, shifts, stores, start_date, end_d
         # Style week header rows with light gray
         week_header_rows = []
         for i, week in enumerate(sorted_weeks):
-            week_header_row = i * (len(shifts) + 2)  # Calculate week header row position (removed +1 since no day header row)
+            week_header_row = i * (len(shifts) + 1)  # Calculate week header row position (removed +2 since no spacing row)
             week_header_rows.append(week_header_row)
         
         for row_idx in week_header_rows:
@@ -474,7 +471,7 @@ def generate_pdf_schedule(x, employees, dates, shifts, stores, start_date, end_d
         # Style shift names in first column with bold
         for week_idx, week in enumerate(sorted_weeks):
             for shift_idx, shift in enumerate(shifts):
-                data_row = week_idx * (len(shifts) + 2) + 1 + shift_idx  # Calculate data row position
+                data_row = week_idx * (len(shifts) + 1) + 1 + shift_idx  # Calculate data row position (removed +2 since no spacing row)
                 table_style.add('FONTNAME', (0, data_row), (0, data_row), 'Helvetica-Bold')  # Bold first column only
         
         table.setStyle(table_style)
