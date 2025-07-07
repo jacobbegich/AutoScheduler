@@ -354,19 +354,6 @@ def generate_pdf_schedule(x, employees, dates, shifts, stores, start_date, end_d
         # Create schedule table for this store
         table_data = []
         
-        # Header row with days of the week
-        header_row = ['Shift']
-        for i in range(7):  # Always 7 days (Mon-Sun)
-            header_row.append(f"Day {i+1}")
-        table_data.append(header_row)
-        
-        # Data rows for each shift
-        for shift in shifts:
-            row = [shift]
-            for i in range(7):  # Always 7 days
-                row.append("")  # Initialize empty
-            table_data.append(row)
-        
         # Now fill in the data by week
         for week_idx, week in enumerate(sorted_weeks):
             week_dates = sorted(weeks[week])  # Sort dates within week
@@ -408,33 +395,29 @@ def generate_pdf_schedule(x, employees, dates, shifts, stores, start_date, end_d
         
         # Style the table with borders and spacing optimized for landscape
         table_style = TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),  # Header row
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 10),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),  # Smaller font for data cells
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ('BACKGROUND', (0, 0), (-1, -1), colors.white),  # All cells white by default
             ('GRID', (0, 0), (-1, -1), 1, colors.black),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.beige, colors.white]),
             ('LEFTPADDING', (0, 0), (-1, -1), 4),
             ('RIGHTPADDING', (0, 0), (-1, -1), 4),
             ('TOPPADDING', (0, 0), (-1, -1), 8),
-            ('BOTTOMPADDING', (0, 1), (-1, -1), 8),
-            ('FONTSIZE', (0, 1), (-1, -1), 8),  # Smaller font for data cells
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
             ('WORDWRAP', (0, 0), (-1, -1), True),  # Enable word wrapping
             ('LEADING', (0, 0), (-1, -1), 10),  # Line spacing for wrapped text
         ])
         
-        # Style week header rows
+        # Style week header rows with light gray
         week_header_rows = []
         for i, week in enumerate(sorted_weeks):
-            week_header_row = 1 + i * (len(shifts) + 2)  # Calculate week header row position
+            week_header_row = i * (len(shifts) + 2)  # Calculate week header row position (removed +1 since no day header row)
             week_header_rows.append(week_header_row)
         
         for row_idx in week_header_rows:
-            table_style.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.lightblue)
+            table_style.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.lightgrey)
             table_style.add('FONTNAME', (0, row_idx), (-1, row_idx), 'Helvetica-Bold')
             table_style.add('FONTSIZE', (0, row_idx), (-1, row_idx), 9)
         
