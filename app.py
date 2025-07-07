@@ -5,6 +5,11 @@ from datetime import datetime, timedelta
 from pulp import LpProblem, LpVariable, LpMinimize, lpSum, LpBinary, LpStatus
 from openpyxl.styles import PatternFill
 from openpyxl.utils.dataframe import dataframe_to_rows
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib import colors
 
 DAYS = ["M", "T", "W", "TH", "F", "SAT", "SUN"]
 SHIFTS = ["4am-12pm", "11am-7pm", "6pm-2am"]
@@ -293,13 +298,106 @@ def run_scheduler(uploaded_file, store_staffing, max_shifts, stores, start_date,
         else:
             max_shifts_val += 1
     if not found:
-        return None, None, None, "No feasible schedule found. Try adjusting preferences or availability."
+        return None, None, None, None, "No feasible schedule found. Try adjusting preferences or availability."
     schedule_result = build_schedule_output(x, understaff, employees, dates, SHIFTS, stores, 
                                          store_staffing, store_preferences, hard_preferences, cannot_work_with)
     out_df = pd.DataFrame(schedule_result, columns=["Day", "Shift", "Store", "Employees Assigned", "Total Assigned", "Missing Staff", "Soft Preference Violations", "Hard Preference Violations", "Incompatible Employee Violations"])
     user_friendly_df = build_user_friendly_schedule(x, employees, dates, SHIFTS, stores)
     employee_summary_df = build_employee_summary(x, employees, dates, SHIFTS, stores)
-    return out_df, user_friendly_df, employee_summary_df, None
+    
+    # Generate PDF schedule
+    pdf_buffer = generate_pdf_schedule(x, employees, dates, SHIFTS, stores, start_date, end_date)
+    
+    return out_df, user_friendly_df, employee_summary_df, pdf_buffer, None
+
+def generate_pdf_schedule(x, employees, dates, shifts, stores, start_date, end_date):
+    """Generate a PDF schedule with separate pages for each store"""
+    
+    # Create PDF buffer
+    pdf_buffer = io.BytesIO()
+    doc = SimpleDocTemplate(pdf_buffer, pagesize=A4, rightMargin=0.5*inch, leftMargin=0.5*inch, 
+                           topMargin=0.5*inch, bottomMargin=0.5*inch)
+    
+    # Get styles
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=16,
+        spaceAfter=20,
+        alignment=1  # Center alignment
+    )
+    
+    story = []
+    
+    # Generate a page for each store
+    for store in stores:
+        # Store title
+        story.append(Paragraph(f"{store} Schedule", title_style))
+        story.append(Spacer(1, 0.2*inch))
+        
+        # Create schedule table for this store
+        table_data = []
+        
+        # Header row with dates
+        header_row = ['Shift']
+        for date in dates:
+            date_obj = datetime.strptime(date, "%Y-%m-%d")
+            header_row.append(date_obj.strftime("%b %d"))
+        table_data.append(header_row)
+        
+        # Data rows for each shift
+        for shift in shifts:
+            row = [shift]
+            for date in dates:
+                # Get employees assigned to this store/shift/date
+                assigned = [e for e in employees if x[e, date, shift, store].varValue is not None and 
+                           abs(x[e, date, shift, store].varValue - 1) < 1e-3]
+                row.append(", ".join(assigned) if assigned else "")
+            table_data.append(row)
+        
+        # Create table with lots of spacing
+        table = Table(table_data, colWidths=[1.5*inch] + [1.2*inch] * len(dates))
+        
+        # Style the table with borders and spacing
+        table_style = TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.beige, colors.white]),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+            ('TOPPADDING', (0, 0), (-1, -1), 12),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 12),
+        ])
+        table.setStyle(table_style)
+        
+        story.append(table)
+        story.append(Spacer(1, 0.3*inch))
+        
+        # Add notes section with plenty of space
+        story.append(Paragraph("Notes:", styles['Heading2']))
+        story.append(Spacer(1, 0.1*inch))
+        
+        # Add blank lines for notes
+        for i in range(8):  # 8 blank lines for notes
+            story.append(Paragraph("&nbsp;", styles['Normal']))
+            story.append(Spacer(1, 0.05*inch))
+        
+        # Add page break (except for last store)
+        if store != stores[-1]:
+            story.append(PageBreak())
+    
+    # Build PDF
+    doc.build(story)
+    pdf_buffer.seek(0)
+    return pdf_buffer
 
 def main():
     st.title("Store Staff Scheduler")
@@ -390,7 +488,7 @@ def main():
     
     if uploaded_file is not None:
         with st.spinner("Generating schedule..."):
-            schedule_df, user_friendly_df, employee_summary_df, error = run_scheduler(uploaded_file, store_staffing, max_shifts, stores, start_datetime, end_datetime)
+            schedule_df, user_friendly_df, employee_summary_df, pdf_buffer, error = run_scheduler(uploaded_file, store_staffing, max_shifts, stores, start_datetime, end_datetime)
         if error:
             st.error(error)
         else:
@@ -428,6 +526,15 @@ def main():
                 file_name=f"schedule_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+            
+            # PDF download
+            if pdf_buffer:
+                st.download_button(
+                    label="Download PDF schedule",
+                    data=pdf_buffer,
+                    file_name=f"schedule_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.pdf",
+                    mime="application/pdf"
+                )
 
 if __name__ == "__main__":
     main() 
