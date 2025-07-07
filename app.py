@@ -311,20 +311,22 @@ def run_scheduler(uploaded_file, store_staffing, max_shifts, stores, start_date,
     return out_df, user_friendly_df, employee_summary_df, pdf_buffer, None
 
 def generate_pdf_schedule(x, employees, dates, shifts, stores, start_date, end_date):
-    """Generate a PDF schedule with separate pages for each store"""
+    """Generate a PDF schedule with separate pages for each store in landscape orientation"""
     
-    # Create PDF buffer
+    # Create PDF buffer with landscape orientation
     pdf_buffer = io.BytesIO()
-    doc = SimpleDocTemplate(pdf_buffer, pagesize=A4, rightMargin=0.5*inch, leftMargin=0.5*inch, 
-                           topMargin=0.5*inch, bottomMargin=0.5*inch)
+    # Use landscape orientation by rotating A4
+    landscape_pagesize = A4[1], A4[0]  # Swap width and height for landscape
+    doc = SimpleDocTemplate(pdf_buffer, pagesize=landscape_pagesize, rightMargin=0.3*inch, leftMargin=0.3*inch, 
+                           topMargin=0.3*inch, bottomMargin=0.3*inch)
     
     # Get styles
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
         'CustomTitle',
         parent=styles['Heading1'],
-        fontSize=16,
-        spaceAfter=20,
+        fontSize=14,
+        spaceAfter=15,
         alignment=1  # Center alignment
     )
     
@@ -334,61 +336,83 @@ def generate_pdf_schedule(x, employees, dates, shifts, stores, start_date, end_d
     for store in stores:
         # Store title
         story.append(Paragraph(f"{store} Schedule", title_style))
-        story.append(Spacer(1, 0.2*inch))
+        story.append(Spacer(1, 0.1*inch))
+        
+        # Group dates by week
+        weeks = {}
+        for date in dates:
+            date_obj = datetime.strptime(date, "%Y-%m-%d")
+            week_start = date_obj - timedelta(days=date_obj.weekday())
+            week_key = week_start.strftime("%Y-%m-%d")
+            if week_key not in weeks:
+                weeks[week_key] = []
+            weeks[week_key].append(date)
+        
+        # Sort weeks chronologically
+        sorted_weeks = sorted(weeks.keys())
         
         # Create schedule table for this store
         table_data = []
         
-        # Header row with dates
+        # Header row with days of the week
         header_row = ['Shift']
-        for date in dates:
-            date_obj = datetime.strptime(date, "%Y-%m-%d")
-            header_row.append(date_obj.strftime("%b %d"))
+        for week in sorted_weeks:
+            week_dates = weeks[week]
+            for date in week_dates:
+                date_obj = datetime.strptime(date, "%Y-%m-%d")
+                header_row.append(date_obj.strftime("%a\n%b %d"))
         table_data.append(header_row)
         
         # Data rows for each shift
         for shift in shifts:
             row = [shift]
-            for date in dates:
-                # Get employees assigned to this store/shift/date
-                assigned = [e for e in employees if x[e, date, shift, store].varValue is not None and 
-                           abs(x[e, date, shift, store].varValue - 1) < 1e-3]
-                row.append(", ".join(assigned) if assigned else "")
+            for week in sorted_weeks:
+                week_dates = weeks[week]
+                for date in week_dates:
+                    # Get employees assigned to this store/shift/date
+                    assigned = [e for e in employees if x[e, date, shift, store].varValue is not None and 
+                               abs(x[e, date, shift, store].varValue - 1) < 1e-3]
+                    row.append(", ".join(assigned) if assigned else "")
             table_data.append(row)
         
-        # Create table with lots of spacing
-        table = Table(table_data, colWidths=[1.5*inch] + [1.2*inch] * len(dates))
+        # Calculate column widths for landscape layout
+        num_columns = len(header_row)
+        col_widths = [1.2*inch] + [0.8*inch] * (num_columns - 1)  # Shift column wider, date columns narrower
         
-        # Style the table with borders and spacing
+        # Create table with landscape-optimized spacing
+        table = Table(table_data, colWidths=col_widths)
+        
+        # Style the table with borders and spacing optimized for landscape
         table_style = TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 12),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
             ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
             ('GRID', (0, 0), (-1, -1), 1, colors.black),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.beige, colors.white]),
-            ('LEFTPADDING', (0, 0), (-1, -1), 6),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-            ('TOPPADDING', (0, 0), (-1, -1), 12),
-            ('BOTTOMPADDING', (0, 1), (-1, -1), 12),
+            ('LEFTPADDING', (0, 0), (-1, -1), 4),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, -1), 8),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 8),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),  # Smaller font for data cells
         ])
         table.setStyle(table_style)
         
         story.append(table)
-        story.append(Spacer(1, 0.3*inch))
+        story.append(Spacer(1, 0.2*inch))
         
         # Add notes section with plenty of space
         story.append(Paragraph("Notes:", styles['Heading2']))
-        story.append(Spacer(1, 0.1*inch))
+        story.append(Spacer(1, 0.05*inch))
         
         # Add blank lines for notes
-        for i in range(8):  # 8 blank lines for notes
+        for i in range(6):  # 6 blank lines for notes (reduced for landscape)
             story.append(Paragraph("&nbsp;", styles['Normal']))
-            story.append(Spacer(1, 0.05*inch))
+            story.append(Spacer(1, 0.03*inch))
         
         # Add page break (except for last store)
         if store != stores[-1]:
