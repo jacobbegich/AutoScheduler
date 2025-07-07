@@ -160,6 +160,11 @@ def build_schedule_output(x, understaff, employees, days, shifts, stores, store_
                 assigned = [e for e in employees if x[e, d, s, st].varValue is not None and abs(x[e, d, s, st].varValue - 1) < 1e-3]
                 num_assigned = len(assigned)
                 missing = int(understaff[d, s, st].varValue) if understaff[d, s, st].varValue is not None else 0
+                required = store_staffing[st]
+                staffing_status = f"{num_assigned}/{required}"
+                if missing > 0:
+                    staffing_status += f" (Understaffed by {missing})"
+                
                 soft_violations = []
                 hard_violations = []
                 incompatible_violations = []
@@ -188,7 +193,7 @@ def build_schedule_output(x, understaff, employees, days, shifts, stores, store_
                     "Shift": s,
                     "Store": st,
                     "Employees Assigned": ", ".join(assigned),
-                    "Total Assigned": num_assigned,
+                    "Staffing": staffing_status,
                     "Missing Staff": missing,
                     "Soft Preference Violations": soft_flag,
                     "Hard Preference Violations": hard_flag,
@@ -286,27 +291,72 @@ def run_scheduler(uploaded_file, store_staffing, max_shifts, stores, start_date,
     date_availability = convert_availability_to_dates(availability, day_to_dates)
     
     employees = df[EMPLOYEE_COL].tolist()
-    max_shifts_val = max_shifts
-    max_shifts_upper_bound = max_shifts_val + 5
-    found = False
-    while max_shifts_val <= max_shifts_upper_bound:
-        x, understaff, status = schedule(date_availability, store_preferences, hard_preferences, cannot_work_with, 
-                                       employees, dates, SHIFTS, stores, store_staffing, max_shifts_val)
-        if status == "Optimal":
-            found = True
-            break
-        else:
-            max_shifts_val += 1
-    if not found:
-        return None, None, None, None, "No feasible schedule found. Try adjusting preferences or availability."
-    schedule_result = build_schedule_output(x, understaff, employees, dates, SHIFTS, stores, 
+    
+    # Group dates by week
+    weeks = {}
+    for date in dates:
+        date_obj = datetime.strptime(date, "%Y-%m-%d")
+        week_start = date_obj - timedelta(days=date_obj.weekday())
+        week_key = week_start.strftime("%Y-%m-%d")
+        if week_key not in weeks:
+            weeks[week_key] = []
+        weeks[week_key].append(date)
+    
+    # Sort weeks chronologically
+    sorted_weeks = sorted(weeks.keys())
+    
+    # Schedule week by week
+    all_assignments = {}
+    all_understaff = {}
+    total_employee_shifts = {emp: 0 for emp in employees}
+    
+    for week_idx, week_start in enumerate(sorted_weeks):
+        week_dates = sorted(weeks[week_start])
+        
+        # Create week-specific availability
+        week_availability = {}
+        for emp in employees:
+            week_availability[emp] = {}
+            for date in week_dates:
+                for shift in SHIFTS:
+                    for store in stores:
+                        if (date, shift, store) in date_availability[emp]:
+                            week_availability[emp][(date, shift, store)] = 1
+        
+        # Adjust max_shifts for this week based on previous weeks
+        remaining_weeks = len(sorted_weeks) - week_idx
+        weekly_max_shifts = max_shifts  # Keep original weekly limit
+        
+        # Try to schedule this week
+        x, understaff, status = schedule(week_availability, store_preferences, hard_preferences, cannot_work_with, 
+                                       employees, week_dates, SHIFTS, stores, store_staffing, weekly_max_shifts)
+        
+        if status != "Optimal":
+            return None, None, None, None, f"No feasible schedule found for week starting {week_start}. Try adjusting preferences or availability."
+        
+        # Store results for this week
+        for emp in employees:
+            for date in week_dates:
+                for shift in SHIFTS:
+                    for store in stores:
+                        all_assignments[emp, date, shift, store] = x[emp, date, shift, store]
+                        if x[emp, date, shift, store].varValue is not None and abs(x[emp, date, shift, store].varValue - 1) < 1e-3:
+                            total_employee_shifts[emp] += 1
+        
+        for date in week_dates:
+            for shift in SHIFTS:
+                for store in stores:
+                    all_understaff[date, shift, store] = understaff[date, shift, store]
+    
+    # Build final outputs
+    schedule_result = build_schedule_output(all_assignments, all_understaff, employees, dates, SHIFTS, stores, 
                                          store_staffing, store_preferences, hard_preferences, cannot_work_with)
-    out_df = pd.DataFrame(schedule_result, columns=["Day", "Shift", "Store", "Employees Assigned", "Total Assigned", "Missing Staff", "Soft Preference Violations", "Hard Preference Violations", "Incompatible Employee Violations"])
-    user_friendly_df = build_user_friendly_schedule(x, employees, dates, SHIFTS, stores)
-    employee_summary_df = build_employee_summary(x, employees, dates, SHIFTS, stores)
+    out_df = pd.DataFrame(schedule_result, columns=["Day", "Shift", "Store", "Employees Assigned", "Staffing", "Missing Staff", "Soft Preference Violations", "Hard Preference Violations", "Incompatible Employee Violations"])
+    user_friendly_df = build_user_friendly_schedule(all_assignments, employees, dates, SHIFTS, stores)
+    employee_summary_df = build_employee_summary(all_assignments, employees, dates, SHIFTS, stores)
     
     # Generate PDF schedule
-    pdf_buffer = generate_pdf_schedule(x, employees, dates, SHIFTS, stores, start_date, end_date)
+    pdf_buffer = generate_pdf_schedule(all_assignments, employees, dates, SHIFTS, stores, start_date, end_date)
     
     return out_df, user_friendly_df, employee_summary_df, pdf_buffer, None
 
