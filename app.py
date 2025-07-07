@@ -413,26 +413,14 @@ def main():
                 
                 # Create red fill pattern for cells with more than 5 shifts
                 red_fill = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
-                # Create yellow fill pattern for cells with 4-5 shifts (warning)
-                yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
                 
-                # Apply red fill to cells in column B (Total Shifts) where value > 5
-                for row in range(2, len(employee_summary_df) + 2):  # Start from row 2 (skip header)
-                    cell = worksheet[f"B{row}"]
-                    if cell.value and cell.value > 5:
-                        cell.fill = red_fill
-                    elif cell.value and cell.value >= 4:
-                        cell.fill = yellow_fill
-                
-                # Apply formatting to weekly columns (columns C onwards)
+                # Only apply formatting to weekly columns (columns C onwards)
                 for col_idx in range(3, len(employee_summary_df.columns) + 1):  # Start from column C
                     col_letter = worksheet.cell(row=1, column=col_idx).column_letter
                     for row in range(2, len(employee_summary_df) + 2):
                         cell = worksheet[f"{col_letter}{row}"]
-                        if cell.value and cell.value > 5:
+                        if cell.value and cell.value >= 6:
                             cell.fill = red_fill
-                        elif cell.value and cell.value >= 4:
-                            cell.fill = yellow_fill
             towrite.seek(0)
             st.download_button(
                 label="Download schedule.xlsx",
