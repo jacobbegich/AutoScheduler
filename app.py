@@ -367,8 +367,8 @@ def generate_pdf_schedule(x, employees, dates, shifts, stores, start_date, end_d
     pdf_buffer = io.BytesIO()
     # Use landscape orientation by rotating A4
     landscape_pagesize = A4[1], A4[0]  # Swap width and height for landscape
-    doc = SimpleDocTemplate(pdf_buffer, pagesize=landscape_pagesize, rightMargin=0.2*inch, leftMargin=0.2*inch, 
-                           topMargin=0.2*inch, bottomMargin=0.2*inch)
+    doc = SimpleDocTemplate(pdf_buffer, pagesize=landscape_pagesize, rightMargin=0.15*inch, leftMargin=0.15*inch, 
+                           topMargin=0.15*inch, bottomMargin=0.15*inch)
     
     # Get styles
     styles = getSampleStyleSheet()
@@ -466,27 +466,25 @@ def generate_pdf_schedule(x, employees, dates, shifts, stores, start_date, end_d
         for row_idx in week_header_rows:
             table_style.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.lightgrey)
             table_style.add('FONTNAME', (0, row_idx), (-1, row_idx), 'Helvetica-Bold')
-            table_style.add('FONTSIZE', (0, row_idx), (-1, row_idx), 9)
+            table_style.add('FONTSIZE', (0, row_idx), (-1, row_idx), 8)
         
         # Style shift names in first column with bold
         for week_idx, week in enumerate(sorted_weeks):
             for shift_idx, shift in enumerate(shifts):
                 data_row = week_idx * (len(shifts) + 1) + 1 + shift_idx  # Calculate data row position (removed +2 since no spacing row)
                 table_style.add('FONTNAME', (0, data_row), (0, data_row), 'Helvetica-Bold')  # Bold first column only
+                table_style.add('FONTSIZE', (0, data_row), (-1, data_row), 7)  # Smaller font for data rows
         
         table.setStyle(table_style)
         
+        # Add table to story
         story.append(table)
-        story.append(Spacer(1, 0.2*inch))
         
-        # Add notes section with plenty of space
-        story.append(Paragraph("Notes:", styles['Heading2']))
-        story.append(Spacer(1, 0.05*inch))
+        # Add some space after table
+        story.append(Spacer(1, 0.1*inch))
         
-        # Add blank lines for notes
-        for i in range(6):  # 6 blank lines for notes (reduced for landscape)
-            story.append(Paragraph("&nbsp;", styles['Normal']))
-            story.append(Spacer(1, 0.03*inch))
+        # Remove Notes header and just add blank space for manual notes
+        story.append(Spacer(1, 0.5*inch))
         
         # Add page break (except for last store)
         if store != stores[-1]:
