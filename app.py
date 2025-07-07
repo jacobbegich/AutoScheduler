@@ -18,6 +18,9 @@ STORE_PREFERENCE_COL = "Store Preference"  # Column E - soft preference
 HARD_PREFERENCE_COL = "Hard Preference"    # Column F - strict constraint
 CANNOT_WORK_WITH_COL = "Cannot Work With"  # Column G - employees who cannot work together
 
+# Define fixed list of stores at the top
+STORES = ["AK&CO", "Bookstore", "AK Mercantile", "Cabin", "Moosetique"]
+
 def get_date_range(start_date, end_date):
     """Convert date range to list of dates and day mappings"""
     dates = []
@@ -546,19 +549,8 @@ def main():
     st.header("Store Configuration")
     st.write("Configure your stores and staffing requirements:")
     
-    # Store input
-    store_input = st.text_area(
-        "Enter store names (one per line):",
-        value="AK&CO\nBookstore\nAK Mercantile\nCabin\nMoosetique",
-        help="Enter each store name on a separate line"
-    )
-    
-    # Parse stores from input
-    stores = [store.strip() for store in store_input.split('\n') if store.strip()]
-    
-    if not stores:
-        st.error("Please enter at least one store name.")
-        return
+    # Remove store input text area, use fixed STORES
+    stores = STORES
     
     # Staffing configuration
     st.subheader("Staffing Requirements")
