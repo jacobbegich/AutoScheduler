@@ -45,18 +45,30 @@ def get_date_range(start_date, end_date):
     
     return dates, day_to_dates
 
-def convert_availability_to_dates(availability, day_to_dates):
-    """Convert availability from day-based to date-based"""
+def convert_availability_to_dates(availability, day_to_dates, days_unavailable, start_date, end_date):
+    """Convert availability from day-based to date-based, excluding days_unavailable"""
     date_availability = {}
-    
+    # Build a set of unavailable date strings for each employee (YYYY-MM-DD)
+    unavailable_map = {}
+    for emp, days in days_unavailable.items():
+        unavailable_dates = set()
+        for d in days:
+            try:
+                # Parse DD/MM to date in current year
+                dt = datetime.strptime(d+f'/{start_date.year}', "%d/%m/%Y")
+                # Only include if in range
+                if start_date <= dt <= end_date:
+                    unavailable_dates.add(dt.strftime("%Y-%m-%d"))
+            except Exception:
+                continue
+        unavailable_map[emp] = unavailable_dates
     for emp, emp_availability in availability.items():
         date_availability[emp] = {}
-        
         for (day, shift, store), available in emp_availability.items():
             if available and day in day_to_dates:
                 for date in day_to_dates[day]:
-                    date_availability[emp][(date, shift, store)] = 1
-    
+                    if date not in unavailable_map.get(emp, set()):
+                        date_availability[emp][(date, shift, store)] = 1
     return date_availability
 
 def parse_availability(df, stores):
@@ -64,6 +76,7 @@ def parse_availability(df, stores):
     store_preferences = {}
     hard_preferences = {}
     cannot_work_with = {}
+    days_unavailable = {}
     for _, row in df.iterrows():
         emp = row[EMPLOYEE_COL]
         availability[emp] = {}
@@ -85,13 +98,20 @@ def parse_availability(df, stores):
             cannot_work_with[emp] = cannot_work_list if cannot_work_list else None
         else:
             cannot_work_with[emp] = None
+        # Parse days unavailable
+        days_unavail = row['Days Unavailable (DD/MM)'] if 'Days Unavailable (DD/MM)' in df.columns else None
+        if pd.notna(days_unavail) and str(days_unavail).strip():
+            days_unavail_list = [d.strip() for d in str(days_unavail).split(",") if d.strip()]
+            days_unavailable[emp] = days_unavail_list if days_unavail_list else []
+        else:
+            days_unavailable[emp] = []
         for shift in SHIFTS:
             days = str(row[shift]).replace(" ","").split(",") if pd.notna(row[shift]) else []
             for day in days:
                 if day:
                     for store in stores:
                         availability[emp][(day, shift, store)] = 1
-    return availability, store_preferences, hard_preferences, cannot_work_with
+    return availability, store_preferences, hard_preferences, cannot_work_with, days_unavailable
 
 def schedule(availability, store_preferences, hard_preferences, cannot_work_with, employees, days, shifts, stores, store_staffing, max_shifts=5):
     prob = LpProblem("StoreShiftScheduling", LpMinimize)
@@ -270,7 +290,7 @@ def build_employee_summary(x, employees, days, shifts, stores):
     return summary_df
 
 def get_availability_template(stores):
-    columns = [EMPLOYEE_COL, STORE_PREFERENCE_COL, HARD_PREFERENCE_COL, CANNOT_WORK_WITH_COL] + SHIFTS
+    columns = [EMPLOYEE_COL, STORE_PREFERENCE_COL, HARD_PREFERENCE_COL, CANNOT_WORK_WITH_COL, 'Days Unavailable (DD/MM)'] + SHIFTS
     df = pd.DataFrame(columns=columns)
     return df
 
@@ -284,11 +304,11 @@ def run_scheduler(uploaded_file, store_staffing, max_shifts, stores, start_date,
         df[CANNOT_WORK_WITH_COL] = None
     
     # Parse availability (still day-based)
-    availability, store_preferences, hard_preferences, cannot_work_with = parse_availability(df, stores)
+    availability, store_preferences, hard_preferences, cannot_work_with, days_unavailable = parse_availability(df, stores)
     
-    # Convert to date-based availability
+    # Convert to date-based availability, excluding days_unavailable
     dates, day_to_dates = get_date_range(start_date, end_date)
-    date_availability = convert_availability_to_dates(availability, day_to_dates)
+    date_availability = convert_availability_to_dates(availability, day_to_dates, days_unavailable, start_date, end_date)
     
     employees = df[EMPLOYEE_COL].tolist()
     
@@ -573,8 +593,9 @@ def main():
     st.write("- **Store Preference**: Preferred stores (comma-separated, soft preference)")
     st.write("- **Hard Preference**: Required stores only (comma-separated, strict constraint)")
     st.write("- **Cannot Work With**: Employees who cannot work together (comma-separated, strict constraint)")
+    st.write("- **Days Unavailable (DD/MM)**: Specific dates this employee cannot work (comma-separated, e.g. 12/06, 15/06)")
     st.write("- **Shift columns**: Available days for each shift (comma-separated)")
-    st.write("**Note**: Availability uses day abbreviations (M, T, W, TH, F, SAT, SUN) but the schedule will show actual dates.")
+    st.write("**Note**: Availability uses day abbreviations (M, T, W, TH, F, SAT, SUN) but the schedule will show actual dates. Use 'Days Unavailable' for specific days off within the range.")
     template_df = get_availability_template(stores)
     template_bytes = io.BytesIO()
     template_df.to_excel(template_bytes, index=False)
