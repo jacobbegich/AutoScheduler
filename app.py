@@ -356,35 +356,59 @@ def generate_pdf_schedule(x, employees, dates, shifts, stores, start_date, end_d
         
         # Header row with days of the week
         header_row = ['Shift']
-        for week in sorted_weeks:
-            week_dates = weeks[week]
-            for date in week_dates:
-                date_obj = datetime.strptime(date, "%Y-%m-%d")
-                header_row.append(date_obj.strftime("%a\n%b %d"))
+        for i in range(7):  # Always 7 days (Mon-Sun)
+            header_row.append(f"Day {i+1}")
         table_data.append(header_row)
         
         # Data rows for each shift
         for shift in shifts:
             row = [shift]
-            for week in sorted_weeks:
-                week_dates = weeks[week]
+            for i in range(7):  # Always 7 days
+                row.append("")  # Initialize empty
+            table_data.append(row)
+        
+        # Now fill in the data by week
+        for week_idx, week in enumerate(sorted_weeks):
+            week_dates = sorted(weeks[week])  # Sort dates within week
+            
+            # Add week header row
+            week_start_date = datetime.strptime(week, "%Y-%m-%d")
+            week_header = [f"Week of {week_start_date.strftime('%b %d')}"]
+            for date in week_dates:
+                date_obj = datetime.strptime(date, "%Y-%m-%d")
+                week_header.append(date_obj.strftime("%a %b %d"))
+            # Pad with empty cells if week has fewer than 7 days
+            while len(week_header) < 8:  # 1 for label + 7 days
+                week_header.append("")
+            table_data.append(week_header)
+            
+            # Add data rows for this week
+            for shift_idx, shift in enumerate(shifts):
+                row = [shift]
                 for date in week_dates:
                     # Get employees assigned to this store/shift/date
                     assigned = [e for e in employees if x[e, date, shift, store].varValue is not None and 
                                abs(x[e, date, shift, store].varValue - 1) < 1e-3]
                     row.append(", ".join(assigned) if assigned else "")
-            table_data.append(row)
+                # Pad with empty cells if week has fewer than 7 days
+                while len(row) < 8:  # 1 for shift + 7 days
+                    row.append("")
+                table_data.append(row)
+            
+            # Add spacing row between weeks (except after last week)
+            if week_idx < len(sorted_weeks) - 1:
+                spacing_row = [""] * 8  # Empty row for spacing
+                table_data.append(spacing_row)
         
         # Calculate column widths for landscape layout
-        num_columns = len(header_row)
-        col_widths = [1.2*inch] + [0.8*inch] * (num_columns - 1)  # Shift column wider, date columns narrower
+        col_widths = [1.5*inch] + [1.2*inch] * 7  # Shift column wider, 7 day columns
         
         # Create table with landscape-optimized spacing
         table = Table(table_data, colWidths=col_widths)
         
         # Style the table with borders and spacing optimized for landscape
         table_style = TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),  # Header row
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
@@ -398,8 +422,22 @@ def generate_pdf_schedule(x, employees, dates, shifts, stores, start_date, end_d
             ('RIGHTPADDING', (0, 0), (-1, -1), 4),
             ('TOPPADDING', (0, 0), (-1, -1), 8),
             ('BOTTOMPADDING', (0, 1), (-1, -1), 8),
-            ('FONTSIZE', (0, 1), (-1, -1), 9),  # Smaller font for data cells
+            ('FONTSIZE', (0, 1), (-1, -1), 8),  # Smaller font for data cells
+            ('WORDWRAP', (0, 0), (-1, -1), True),  # Enable word wrapping
+            ('LEADING', (0, 0), (-1, -1), 10),  # Line spacing for wrapped text
         ])
+        
+        # Style week header rows
+        week_header_rows = []
+        for i, week in enumerate(sorted_weeks):
+            week_header_row = 1 + i * (len(shifts) + 2)  # Calculate week header row position
+            week_header_rows.append(week_header_row)
+        
+        for row_idx in week_header_rows:
+            table_style.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.lightblue)
+            table_style.add('FONTNAME', (0, row_idx), (-1, row_idx), 'Helvetica-Bold')
+            table_style.add('FONTSIZE', (0, row_idx), (-1, row_idx), 9)
+        
         table.setStyle(table_style)
         
         story.append(table)
