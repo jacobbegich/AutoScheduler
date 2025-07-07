@@ -54,8 +54,8 @@ def convert_availability_to_dates(availability, day_to_dates, days_unavailable, 
         unavailable_dates = set()
         for d in days:
             try:
-                # Parse DD/MM to date in current year
-                dt = datetime.strptime(d+f'/{start_date.year}', "%d/%m/%Y")
+                # Parse MM/DD to date in current year
+                dt = datetime.strptime(d+f'/{start_date.year}', "%m/%d/%Y")
                 # Only include if in range
                 if start_date <= dt <= end_date:
                     unavailable_dates.add(dt.strftime("%Y-%m-%d"))
@@ -99,7 +99,7 @@ def parse_availability(df, stores):
         else:
             cannot_work_with[emp] = None
         # Parse days unavailable
-        days_unavail = row['Days Unavailable (DD/MM)'] if 'Days Unavailable (DD/MM)' in df.columns else None
+        days_unavail = row['Days Unavailable (MM/DD)'] if 'Days Unavailable (MM/DD)' in df.columns else None
         if pd.notna(days_unavail) and str(days_unavail).strip():
             days_unavail_list = [d.strip() for d in str(days_unavail).split(",") if d.strip()]
             days_unavailable[emp] = days_unavail_list if days_unavail_list else []
@@ -290,7 +290,7 @@ def build_employee_summary(x, employees, days, shifts, stores):
     return summary_df
 
 def get_availability_template(stores):
-    columns = [EMPLOYEE_COL, STORE_PREFERENCE_COL, HARD_PREFERENCE_COL, CANNOT_WORK_WITH_COL, 'Days Unavailable (DD/MM)'] + SHIFTS
+    columns = [EMPLOYEE_COL, STORE_PREFERENCE_COL, HARD_PREFERENCE_COL, CANNOT_WORK_WITH_COL, 'Days Unavailable (MM/DD)'] + SHIFTS
     df = pd.DataFrame(columns=columns)
     return df
 
@@ -593,7 +593,7 @@ def main():
     st.write("- **Store Preference**: Preferred stores (comma-separated, soft preference)")
     st.write("- **Hard Preference**: Required stores only (comma-separated, strict constraint)")
     st.write("- **Cannot Work With**: Employees who cannot work together (comma-separated, strict constraint)")
-    st.write("- **Days Unavailable (DD/MM)**: Specific dates this employee cannot work (comma-separated, e.g. 12/06, 15/06)")
+    st.write("- **Days Unavailable (MM/DD)**: Specific dates this employee cannot work (comma-separated, e.g. 06/12, 06/15)")
     st.write("- **Shift columns**: Available days for each shift (comma-separated)")
     st.write("**Note**: Availability uses day abbreviations (M, T, W, TH, F, SAT, SUN) but the schedule will show actual dates. Use 'Days Unavailable' for specific days off within the range.")
     template_df = get_availability_template(stores)
